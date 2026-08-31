@@ -6,6 +6,65 @@
 
 ---
 
+## 0. ノード起動方法
+
+このパッケージの実行ノードは `shooter_calculator_node` です。`ros2 launch` で起動します。
+
+### 0-1. ビルド
+
+ワークスペースのルートで以下を実行します。
+
+```bash
+cd ~/ros2_ws
+source /opt/ros/humble/setup.bash
+colcon build --packages-select shooter_calculator
+source install/setup.bash
+```
+
+### 0-2. ノード起動
+
+ビルド後、次のコマンドでノードを起動します。
+
+```bash
+ros2 launch shooter_calculator shooter_calculator.launch.py
+```
+
+これで `shooter_calculator` という名前のノードが立ち上がり、`~/trajectory_markers` に `MarkerArray` を配信します。
+
+### 0-3. 必須の前提
+
+起動しても表示されない場合は、次の TF が存在しているか確認してください。
+
+- `map -> base_link`
+- `map -> moving_bucket`
+
+`target_frame` と `robot_frame` は launch ファイル内で以下のデフォルト値になっています。
+
+- `target_frame`: `moving_bucket`
+- `target_frame_fallback`: `movingbacket`
+- `robot_frame`: `base_link`
+
+必要に応じて引数で変更できます。
+
+```bash
+ros2 launch shooter_calculator shooter_calculator.launch.py \
+  target_frame:=moving_bucket \
+  robot_frame:=base_link
+```
+
+### 0-4. 動作確認の流れ
+
+起動後に次を確認すると分かりやすいです。
+
+```bash
+ros2 topic list | grep -E "trajectory|tf"
+ros2 topic echo /tf
+```
+
+もし `map -> base_link` や `map -> moving_bucket` が出ていない場合、ノードは `lookupTransform` に失敗して軌跡計算が行われません。
+
+---
+
 ## 1. このパッケージがやること
 
 shooter_calculator は物体検出を行いません。あくまで次の役割を担います。
