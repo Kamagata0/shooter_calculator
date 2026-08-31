@@ -1,0 +1,13 @@
+# ROS / build artifacts
+build/
+install/
+log/
+*.colcon.meta
+*.orig
+
+# Editor
+.vscode/
+
+# OS files
+.DS_Store
+Thumbs.db
