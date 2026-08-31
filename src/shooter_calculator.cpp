@@ -1,6 +1,6 @@
 #include "shooter_calculator/shooter_calculator.hpp"
-
 #include <algorithm>
+#include <cmath>
 
 namespace shooter_calculator
 {
@@ -12,8 +12,6 @@ ShooterCalculator::ShooterCalculator()
 
 void ShooterCalculator::initializeLUT()
 {
-  // 仮LUT: PWM値と初速度の関係
-  // 実測データを後で置き換えてください
   lut_ = {
     {0, 0.0},       // PWM 0
     {50, 3.5},      // PWM 50
@@ -26,32 +24,21 @@ void ShooterCalculator::initializeLUT()
 
 double ShooterCalculator::getVelocityFromPWM(int pwm_value)
 {
-  // PWM値を0-255に制限
   pwm_value = std::clamp(pwm_value, 0, 255);
-
-  // LUT内で対応する値を探す
   for (size_t i = 0; i < lut_.size() - 1; ++i) {
     if (lut_[i].pwm_value <= pwm_value && pwm_value <= lut_[i + 1].pwm_value) {
       return linearInterpolate(pwm_value, lut_[i], lut_[i + 1]);
     }
   }
-
-  // 最大値を超えた場合
   return lut_.back().initial_velocity;
 }
 
-int ShooterCalculator::getPWMFromDistance(double distance)
+int ShooterCalculator::getPWMFromVelocity(double required_velocity)
 {
-  // 45度で発射した場合の初速度: v₀² = distance * g
-  // （最高到達距離 = v₀² / g）
-  double required_velocity = std::sqrt(distance * GRAVITY);
-
-  // LUT内で対応するPWM値を探す（逆引き）
   for (size_t i = 0; i < lut_.size() - 1; ++i) {
     if (lut_[i].initial_velocity <= required_velocity &&
         required_velocity <= lut_[i + 1].initial_velocity)
     {
-      // 線形補間で逆算
       double ratio = (required_velocity - lut_[i].initial_velocity) /
                      (lut_[i + 1].initial_velocity - lut_[i].initial_velocity);
       int pwm = static_cast<int>(lut_[i].pwm_value +
@@ -59,9 +46,69 @@ int ShooterCalculator::getPWMFromDistance(double distance)
       return std::clamp(pwm, 0, 255);
     }
   }
-
-  // 必要な速度が最大値を超える場合
+  if (required_velocity < lut_.front().initial_velocity) return 0;
   return 255;
+}
+
+double ShooterCalculator::getRequiredVelocityWithDrag(
+  double horizontal_distance,
+  double height_diff,
+  double angle_deg,
+  double mass,
+  double area,
+  double drag_coeff)
+{
+  double min_vel = 1.0;
+  double max_vel = 20.0;
+  double best_vel = 5.0;
+
+  const double angle_rad = angle_deg * M_PI / 180.0;
+  const double air_density = 1.225;
+  const double drag_factor = 0.5 * air_density * drag_coeff * area / std::max(mass, 0.01);
+  const double dt = 0.005;
+
+  for (int iter = 0; iter < 30; ++iter) {
+    best_vel = (min_vel + max_vel) / 2.0;
+
+    double x = 0.0;
+    double z = 0.0;
+    double vx = best_vel * std::cos(angle_rad);
+    double vz = best_vel * std::sin(angle_rad);
+
+    bool reached_distance = false;
+    double final_z = -999.0;
+
+    for (int i = 0; i < 1000; ++i) {
+      double speed = std::sqrt(vx * vx + vz * vz);
+      double ax = -drag_factor * speed * vx;
+      double az = -GRAVITY - drag_factor * speed * vz;
+
+      vx += ax * dt;
+      vz += az * dt;
+      x += vx * dt;
+      z += vz * dt;
+
+      if (x >= horizontal_distance) {
+        final_z = z;
+        reached_distance = true;
+        break;
+      }
+      if (z < height_diff - 2.0) {
+        break;
+      }
+    }
+
+    if (reached_distance) {
+      if (final_z >= height_diff) {
+        max_vel = best_vel;
+      } else {
+        min_vel = best_vel;
+      }
+    } else {
+      min_vel = best_vel;
+    }
+  }
+  return best_vel;
 }
 
 std::vector<geometry_msgs::msg::Point> ShooterCalculator::calculateTrajectory(
@@ -69,31 +116,23 @@ std::vector<geometry_msgs::msg::Point> ShooterCalculator::calculateTrajectory(
   int num_points)
 {
   std::vector<geometry_msgs::msg::Point> trajectory;
-
   double angle_rad = SHOOTER_ANGLE_DEG * M_PI / 180.0;
   double v_x = initial_velocity * std::cos(angle_rad);
   double v_z = initial_velocity * std::sin(angle_rad);
-
-  // 最大到達距離を計算
   double max_distance = (initial_velocity * initial_velocity * std::sin(2 * angle_rad)) / GRAVITY;
-  double dt = max_distance / (num_points - 1);
 
   for (int i = 0; i < num_points; ++i) {
     double t = (i * max_distance) / (v_x * (num_points - 1));
-
     geometry_msgs::msg::Point p;
     p.x = SHOOTER_HORIZONTAL + v_x * t;
-    p.y = 0.0; // 45度固定で左右方向なし
+    p.y = 0.0;
     p.z = SHOOTER_HEIGHT + v_z * t - 0.5 * GRAVITY * t * t;
-
-    // 地面より下には行かない
     if (p.z >= 0.0) {
       trajectory.push_back(p);
     } else {
       break;
     }
   }
-
   return trajectory;
 }
 
