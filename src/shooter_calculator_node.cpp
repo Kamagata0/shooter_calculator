@@ -19,8 +19,12 @@ public:
     calculator_(std::make_unique<ShooterCalculator>())
   {
     this->declare_parameter("target_frame", "moving_bucket");
-    this->declare_parameter("target_frame_fallback", "movingbacket");
+    this->declare_parameter("target_frame_fallback", "moving_bucket");
     this->declare_parameter("robot_frame", "base_link");
+    this->declare_parameter("launch_angle_deg", 45.0);
+    this->declare_parameter("cloth_mass_kg", 0.12);
+    this->declare_parameter("cloth_area_m2", 0.36);
+    this->declare_parameter("drag_coefficient", 0.8);
 
     tf_buffer_ = std::make_shared<tf2_ros::Buffer>(this->get_clock());
     tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
@@ -42,7 +46,7 @@ private:
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr pub_trajectory_;
   rclcpp::TimerBase::SharedPtr timer_;
 
-  geometry_msgs::msg::TransformStamped lookupTargetTransform() const
+  geometry_msgs::msg::TransformStamped lookupTargetTransform()
   {
     const auto target_frame = this->get_parameter("target_frame").as_string();
     const auto fallback_target_frame = this->get_parameter("target_frame_fallback").as_string();
@@ -91,8 +95,92 @@ private:
       int required_pwm = calculator_->getPWMFromDistance(horizontal_distance);
       double required_velocity = calculator_->getVelocityFromPWM(required_pwm);
 
-      // 弾道軌跡を計算
-      auto trajectory = calculator_->calculateTrajectory(required_velocity, 50);
+      // 45度の投射軌道を target に到達するように計算する
+      const double shooter_x = robot_x + 0.2;
+      const double shooter_y = robot_y;
+      const double shooter_z = 0.3;
+      const double dx_to_target = target_x - shooter_x;
+      const double dy_to_target = target_y - shooter_y;
+      const double horizontal_target_distance = std::sqrt(dx_to_target * dx_to_target +
+                                                        dy_to_target * dy_to_target);
+
+      const double launch_angle_deg = this->get_parameter("launch_angle_deg").as_double();
+      const double cloth_mass = this->get_parameter("cloth_mass_kg").as_double();
+      const double cloth_area = this->get_parameter("cloth_area_m2").as_double();
+      const double drag_coefficient = this->get_parameter("drag_coefficient").as_double();
+      const double angle_rad = launch_angle_deg * M_PI / 180.0;
+
+      std::vector<geometry_msgs::msg::Point> target_trajectory;
+      if (horizontal_target_distance > 0.0) {
+        const double target_range = horizontal_target_distance;
+        const double target_height_delta = target_z - shooter_z;
+        const double cos2 = std::cos(angle_rad) * std::cos(angle_rad);
+        const double tan_theta = std::tan(angle_rad);
+        const double denominator = 2.0 * cos2 * (target_range * tan_theta - target_height_delta);
+
+        double required_speed = required_velocity;
+        if (denominator > 1e-6) {
+          const double v2 = (calculator_->GRAVITY * target_range * target_range) / denominator;
+          required_speed = std::sqrt(std::max(v2, 1.0));
+        }
+
+        const double ux = dx_to_target / horizontal_target_distance;
+        const double uy = dy_to_target / horizontal_target_distance;
+
+        const double air_density = 1.225;
+        const double dt = 0.02;
+        const double initial_speed = std::max(required_speed, 1.0);
+
+        double x = shooter_x;
+        double y = shooter_y;
+        double z = shooter_z;
+        double vx = initial_speed * std::cos(angle_rad) * ux;
+        double vy = initial_speed * std::cos(angle_rad) * uy;
+        double vz = initial_speed * std::sin(angle_rad);
+
+        for (int i = 0; i < 200; ++i) {
+          const double speed = std::sqrt(vx * vx + vy * vy + vz * vz);
+          if (speed < 1e-6) {
+            break;
+          }
+
+          const double drag_factor = 0.5 * air_density * drag_coefficient * cloth_area / std::max(cloth_mass, 0.05);
+          const double ax = -drag_factor * speed * vx;
+          const double ay = -drag_factor * speed * vy;
+          const double az = -calculator_->GRAVITY - drag_factor * speed * vz;
+
+          vx += ax * dt;
+          vy += ay * dt;
+          vz += az * dt;
+
+          x += vx * dt;
+          y += vy * dt;
+          z += vz * dt;
+
+          geometry_msgs::msg::Point p;
+          p.x = x;
+          p.y = y;
+          p.z = z;
+
+          const double dist_to_target = std::sqrt((x - target_x) * (x - target_x) +
+                                                 (y - target_y) * (y - target_y) +
+                                                 (z - target_z) * (z - target_z));
+
+          if (dist_to_target < 0.15) {
+            p.x = target_x;
+            p.y = target_y;
+            p.z = target_z;
+            target_trajectory.push_back(p);
+            break;
+          }
+
+          if (z < 0.0) {
+            break;
+          }
+
+          target_trajectory.push_back(p);
+        }
+      }
 
       // マーカーArrayを作成
       visualization_msgs::msg::MarkerArray marker_array;
@@ -151,26 +239,15 @@ private:
       trajectory_marker.color.b = 0.0;
       trajectory_marker.color.a = 0.8;
 
-      // シューター位置から開始
-      geometry_msgs::msg::Point start;
-      start.x = robot_x + 0.2;
-      start.y = robot_y;
-      start.z = 0.3;
-      trajectory_marker.points.push_back(start);
-
-      // 弾道軌跡を追加（ロボット座標系からmap座標系に変換）
-      for (const auto & p : trajectory) {
-        geometry_msgs::msg::Point map_point;
-        map_point.x = robot_x + 0.2 + p.x;
-        map_point.y = robot_y + p.y;
-        map_point.z = p.z;
-        trajectory_marker.points.push_back(map_point);
+      // シューター位置から開始し、target 方向へ向かう線を描画
+      for (const auto & p : target_trajectory) {
+        trajectory_marker.points.push_back(p);
       }
 
       marker_array.markers.push_back(trajectory_marker);
 
       // 3: 着弾予測点（大きな円）
-      if (!trajectory.empty()) {
+      if (!target_trajectory.empty()) {
         visualization_msgs::msg::Marker landing_marker;
         landing_marker.header.frame_id = "map";
         landing_marker.header.stamp = this->now();
@@ -178,9 +255,9 @@ private:
         landing_marker.id = 3;
         landing_marker.type = visualization_msgs::msg::Marker::SPHERE;
         landing_marker.action = visualization_msgs::msg::Marker::ADD;
-        landing_marker.pose.position.x = robot_x + 0.2 + trajectory.back().x;
-        landing_marker.pose.position.y = robot_y + trajectory.back().y;
-        landing_marker.pose.position.z = trajectory.back().z;
+        landing_marker.pose.position.x = target_x;
+        landing_marker.pose.position.y = target_y;
+        landing_marker.pose.position.z = target_z;
         landing_marker.scale.x = 0.15;
         landing_marker.scale.y = 0.15;
         landing_marker.scale.z = 0.15;

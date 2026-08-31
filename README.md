@@ -29,7 +29,12 @@ source install/setup.bash
 ros2 launch shooter_calculator shooter_calculator.launch.py
 ```
 
-これで `shooter_calculator` という名前のノードが立ち上がり、`~/trajectory_markers` に `MarkerArray` を配信します。
+これで `shooter_calculator` という名前のノードが立ち上がり、`MarkerArray` を配信します。実際のトピック名は次のとおりです。
+
+- Publisher: `/shooter_calculator/trajectory_markers`
+- ノード内の定義: `~/trajectory_markers`
+
+つまり、RViz では `visualization_msgs/msg/MarkerArray` のトピックとして `/shooter_calculator/trajectory_markers` を選択すればOKです。
 
 ### 0-3. 必須の前提
 
@@ -41,7 +46,7 @@ ros2 launch shooter_calculator shooter_calculator.launch.py
 `target_frame` と `robot_frame` は launch ファイル内で以下のデフォルト値になっています。
 
 - `target_frame`: `moving_bucket`
-- `target_frame_fallback`: `movingbacket`
+- `target_frame_fallback`: `moving_bucket`
 - `robot_frame`: `base_link`
 
 必要に応じて引数で変更できます。
@@ -49,17 +54,35 @@ ros2 launch shooter_calculator shooter_calculator.launch.py
 ```bash
 ros2 launch shooter_calculator shooter_calculator.launch.py \
   target_frame:=moving_bucket \
-  robot_frame:=base_link
+  robot_frame:=base_link \
+  launch_angle_deg:=45.0 \
+  cloth_mass_kg:=0.12 \
+  cloth_area_m2:=0.36 \
+  drag_coefficient:=0.8
 ```
 
-### 0-4. 動作確認の流れ
+### 0-4. 雑巾っぽい軌道の調整
+
+このノードでは、雑巾のような軽い布を対象にした簡易モデルを使っています。 そのため、次の 4 つをパラメータとして調整できます。
+
+- `launch_angle_deg`: 射出角度
+- `cloth_mass_kg`: 雑巾の質量 [kg]
+- `cloth_area_m2`: 風に受ける面積 [m^2]
+- `drag_coefficient`: 空気抵抗係数
+
+たとえば雑巾が軽くて大きい場合は、`cloth_mass_kg` を小さくし、`cloth_area_m2` を大きくし、`drag_coefficient` を少し上げると、軌道がよりゆるやかになります。
+
+### 0-5. 動作確認の流れ
 
 起動後に次を確認すると分かりやすいです。
 
 ```bash
 ros2 topic list | grep -E "trajectory|tf"
 ros2 topic echo /tf
+ros2 topic echo /shooter_calculator/trajectory_markers
 ```
+
+RViz で表示したい場合は、`Add` -> `By topic` -> `visualization_msgs/msg/MarkerArray` から `/shooter_calculator/trajectory_markers` を選択してください。
 
 もし `map -> base_link` や `map -> moving_bucket` が出ていない場合、ノードは `lookupTransform` に失敗して軌跡計算が行われません。
 
