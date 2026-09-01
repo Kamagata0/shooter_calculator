@@ -15,7 +15,7 @@ def generate_launch_description():
             'target_frame': 'moving_bucket',
             'target_frame_fallback': 'moving_bucket',
             'robot_frame': 'base_link',
-            'launch_angle_deg': 45.0,
+            'launch_angle_deg': 50.0,
             'cloth_mass_kg': 0.12,
             'cloth_area_m2': 0.01,
             'drag_coefficient': 0.1,

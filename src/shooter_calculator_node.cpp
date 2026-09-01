@@ -126,59 +126,66 @@ private:
       const double drag_coefficient = this->get_parameter("drag_coefficient").as_double();
       const double angle_rad = launch_angle_deg * M_PI / 180.0;
 
-      // 空気抵抗を考慮した必要初速の算出
-      double required_velocity = calculator_->getRequiredVelocityWithDrag(
-        horizontal_target_distance, target_height_delta, launch_angle_deg, 
-        cloth_mass, cloth_area, drag_coefficient);
+      // 実測データベースを優先し、距離から output level を逆算して release velocity を求める
+      int required_output = calculator_->getOutputLevelFromDistance(horizontal_target_distance);
+      double required_velocity = calculator_->getReleaseVelocityFromOutputLevel(required_output);
 
-      // 初速からPWM値への変換（LUTを使用）
-      int required_pwm = calculator_->getPWMFromVelocity(required_velocity);
-
-      // 弾道軌跡のシミュレーション計算
+      // 全出力レベルの軌跡を一度に可視化し、現在の推奨値を強調する
+      std::vector<std::vector<geometry_msgs::msg::Point>> all_trajectories;
       std::vector<geometry_msgs::msg::Point> target_trajectory;
-      
+
       if (horizontal_target_distance > 0.0) {
         const double ux = dx_to_target / horizontal_target_distance;
         const double uy = dy_to_target / horizontal_target_distance;
         const double air_density = 1.225; // 空気密度 [kg/m^3]
         const double dt = 0.02;           // シミュレーションの刻み時間 [秒]
 
-        double x = shooter_x;
-        double y = shooter_y;
-        double z = shooter_z;
-        double vx = required_velocity * std::cos(angle_rad) * ux;
-        double vy = required_velocity * std::cos(angle_rad) * uy;
-        double vz = required_velocity * std::sin(angle_rad);
+        for (int output = 1; output <= 10; ++output) {
+          std::vector<geometry_msgs::msg::Point> trajectory;
+          const double output_velocity = calculator_->getReleaseVelocityFromOutputLevel(output);
 
-        for (int i = 0; i < 200; ++i) {
-          const double speed = std::sqrt(vx * vx + vy * vy + vz * vz);
-          if (speed < 1e-6) break;
+          double x = shooter_x;
+          double y = shooter_y;
+          double z = shooter_z;
+          double vx = output_velocity * std::cos(angle_rad) * ux;
+          double vy = output_velocity * std::cos(angle_rad) * uy;
+          double vz = output_velocity * std::sin(angle_rad);
 
-          const double drag_factor = 0.5 * air_density * drag_coefficient * cloth_area / std::max(cloth_mass, 0.05);
-          const double ax = -drag_factor * speed * vx;
-          const double ay = -drag_factor * speed * vy;
-          const double az = -calculator_->GRAVITY - drag_factor * speed * vz;
+          for (int i = 0; i < 200; ++i) {
+            const double speed = std::sqrt(vx * vx + vy * vy + vz * vz);
+            if (speed < 1e-6) break;
 
-          vx += ax * dt;
-          vy += ay * dt;
-          vz += az * dt;
-          x += vx * dt;
-          y += vy * dt;
-          z += vz * dt;
+            const double drag_factor = 0.5 * air_density * drag_coefficient * cloth_area / std::max(cloth_mass, 0.05);
+            const double ax = -drag_factor * speed * vx;
+            const double ay = -drag_factor * speed * vy;
+            const double az = -calculator_->GRAVITY - drag_factor * speed * vz;
 
-          geometry_msgs::msg::Point p;
-          p.x = x; p.y = y; p.z = z;
-          
-          const double dist_to_target = std::sqrt((x - target_x)*(x - target_x) + 
-                                                  (y - target_y)*(y - target_y) + 
-                                                  (z - target_z)*(z - target_z));
-          if (dist_to_target < 0.15) {
-            p.x = target_x; p.y = target_y; p.z = target_z;
-            target_trajectory.push_back(p);
-            break;
+            vx += ax * dt;
+            vy += ay * dt;
+            vz += az * dt;
+            x += vx * dt;
+            y += vy * dt;
+            z += vz * dt;
+
+            geometry_msgs::msg::Point p;
+            p.x = x; p.y = y; p.z = z;
+
+            const double dist_to_target = std::sqrt((x - target_x) * (x - target_x) +
+                                                    (y - target_y) * (y - target_y) +
+                                                    (z - target_z) * (z - target_z));
+            if (dist_to_target < 0.15) {
+              p.x = target_x; p.y = target_y; p.z = target_z;
+              trajectory.push_back(p);
+              break;
+            }
+            if (z < 0.0) break;
+            trajectory.push_back(p);
           }
-          if (z < 0.0) break;
-          target_trajectory.push_back(p);
+
+          all_trajectories.push_back(trajectory);
+          if (output == required_output) {
+            target_trajectory = trajectory;
+          }
         }
       }
 
@@ -217,7 +224,7 @@ private:
       shooter_marker.color.r = 1.0; shooter_marker.color.g = 1.0; shooter_marker.color.b = 0.0; shooter_marker.color.a = 1.0;
       marker_array.markers.push_back(shooter_marker);
 
-      // 2: 緑の線（予測弾道の軌跡）
+      // 2: 現在推奨出力の緑の線（ハイライト）
       visualization_msgs::msg::Marker trajectory_marker;
       trajectory_marker.header.frame_id = "map";
       trajectory_marker.header.stamp = this->now();
@@ -225,12 +232,36 @@ private:
       trajectory_marker.id = 2;
       trajectory_marker.type = visualization_msgs::msg::Marker::LINE_STRIP;
       trajectory_marker.action = visualization_msgs::msg::Marker::ADD;
-      trajectory_marker.scale.x = 0.02; // 線の太さ
-      trajectory_marker.color.r = 0.0; trajectory_marker.color.g = 1.0; trajectory_marker.color.b = 0.0; trajectory_marker.color.a = 0.8;
+      trajectory_marker.scale.x = 0.025;
+      trajectory_marker.color.r = 0.0; trajectory_marker.color.g = 1.0; trajectory_marker.color.b = 0.0; trajectory_marker.color.a = 0.95;
       for (const auto & p : target_trajectory) {
         trajectory_marker.points.push_back(p);
       }
       marker_array.markers.push_back(trajectory_marker);
+
+      // 全出力レベルの軌跡を薄く重ね描きする（1〜10）
+      for (int output = 1; output <= 10; ++output) {
+        visualization_msgs::msg::Marker all_output_marker;
+        all_output_marker.header.frame_id = "map";
+        all_output_marker.header.stamp = this->now();
+        all_output_marker.ns = "shooter";
+        all_output_marker.id = 100 + output;
+        all_output_marker.type = visualization_msgs::msg::Marker::LINE_STRIP;
+        all_output_marker.action = visualization_msgs::msg::Marker::ADD;
+        all_output_marker.scale.x = 0.008;
+
+        const double t = static_cast<double>(output - 1) / 9.0;
+        all_output_marker.color.r = 0.2 + 0.8 * t;
+        all_output_marker.color.g = 0.2 + 0.8 * (1.0 - t);
+        all_output_marker.color.b = 0.9;
+        all_output_marker.color.a = 0.25;
+
+        const auto & traj = all_trajectories.at(output - 1);
+        for (const auto & p : traj) {
+          all_output_marker.points.push_back(p);
+        }
+        marker_array.markers.push_back(all_output_marker);
+      }
 
       // 3: 青球（着地予測点）
       if (!target_trajectory.empty()) {
@@ -263,8 +294,8 @@ private:
       info_marker.scale.z = 0.1;
       info_marker.color.r = 1.0; info_marker.color.g = 1.0; info_marker.color.b = 1.0; info_marker.color.a = 1.0;
       info_marker.text = "Distance: " + std::to_string(horizontal_target_distance) + " m\n" +
-                         "PWM: " + std::to_string(required_pwm) + "\n" +
-                         "Velocity: " + std::to_string(required_velocity) + " m/s";
+                         "Output: " + std::to_string(required_output) + "\n" +
+                         "Release velocity: " + std::to_string(required_velocity) + " m/s";
       marker_array.markers.push_back(info_marker);
 
       pub_trajectory_->publish(marker_array);
@@ -275,12 +306,12 @@ private:
       RCLCPP_INFO_THROTTLE(
         this->get_logger(),
         *this->get_clock(),
-        1000, // 1000ms（1秒）間隔
-        "Target: %.2f m, Height: %.2f m | Required Vel: %.2f m/s -> [ PWM: %d ]",
-        horizontal_target_distance, 
-        target_height_delta, 
-        required_velocity, 
-        required_pwm
+        1000,
+        "Target: %.2f m, Height: %.2f m | Required Vel: %.2f m/s -> [ Output: %d ]",
+        horizontal_target_distance,
+        target_height_delta,
+        required_velocity,
+        required_output
       );
 
     } catch (const tf2::TransformException & ex) {

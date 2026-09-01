@@ -13,41 +13,63 @@ ShooterCalculator::ShooterCalculator()
 void ShooterCalculator::initializeLUT()
 {
   lut_ = {
-    {0, 0.0},       // PWM 0
-    {50, 3.5},      // PWM 50
-    {100, 6.2},     // PWM 100
-    {150, 9.1},     // PWM 150
-    {200, 11.8},    // PWM 200
-    {255, 14.5},    // PWM 255 (最大)
+    {1, 1.55, 0.0},
+    {2, 2.296666667, 0.533333333},
+    {3, 4.763333333, 2.666666667},
+    {4, 5.953333333, 3.966666667},
+    {5, 8.84, 3.566666667},
+    {6, 11.23333333, 4.1},
+    {7, 8.516666667, 3.333333333},
+    {8, 9.04, 3.566666667},
+    {9, 9.42, 3.833333333},
+    {10, 10.84666667, 3.966666667}
   };
 }
 
-double ShooterCalculator::getVelocityFromPWM(int pwm_value)
+double ShooterCalculator::getReleaseVelocityFromOutputLevel(int output_level)
 {
-  pwm_value = std::clamp(pwm_value, 0, 255);
+  output_level = std::clamp(output_level, 1, 10);
   for (size_t i = 0; i < lut_.size() - 1; ++i) {
-    if (lut_[i].pwm_value <= pwm_value && pwm_value <= lut_[i + 1].pwm_value) {
-      return linearInterpolate(pwm_value, lut_[i], lut_[i + 1]);
+    if (lut_[i].output_level <= output_level && output_level <= lut_[i + 1].output_level) {
+      return linearInterpolate(output_level, lut_[i], lut_[i + 1]);
     }
   }
-  return lut_.back().initial_velocity;
+  return lut_.back().release_velocity;
 }
 
-int ShooterCalculator::getPWMFromVelocity(double required_velocity)
+int ShooterCalculator::getOutputLevelFromDistance(double distance)
 {
+  if (distance <= 0.0) {
+    return 1;
+  }
+
   for (size_t i = 0; i < lut_.size() - 1; ++i) {
-    if (lut_[i].initial_velocity <= required_velocity &&
-        required_velocity <= lut_[i + 1].initial_velocity)
-    {
-      double ratio = (required_velocity - lut_[i].initial_velocity) /
-                     (lut_[i + 1].initial_velocity - lut_[i].initial_velocity);
-      int pwm = static_cast<int>(lut_[i].pwm_value +
-                                 ratio * (lut_[i + 1].pwm_value - lut_[i].pwm_value));
-      return std::clamp(pwm, 0, 255);
+    if (lut_[i].flight_distance <= distance && distance <= lut_[i + 1].flight_distance) {
+      double ratio = (distance - lut_[i].flight_distance) /
+                     (lut_[i + 1].flight_distance - lut_[i].flight_distance);
+      int level = static_cast<int>(lut_[i].output_level +
+                                  ratio * (lut_[i + 1].output_level - lut_[i].output_level));
+      return std::clamp(level, 1, 10);
     }
   }
-  if (required_velocity < lut_.front().initial_velocity) return 0;
-  return 255;
+  return 10;
+}
+
+int ShooterCalculator::getOutputLevelFromVelocity(double required_velocity)
+{
+  for (size_t i = 0; i < lut_.size() - 1; ++i) {
+    if (lut_[i].release_velocity <= required_velocity &&
+        required_velocity <= lut_[i + 1].release_velocity)
+    {
+      double ratio = (required_velocity - lut_[i].release_velocity) /
+                     (lut_[i + 1].release_velocity - lut_[i].release_velocity);
+      int level = static_cast<int>(lut_[i].output_level +
+                                  ratio * (lut_[i + 1].output_level - lut_[i].output_level));
+      return std::clamp(level, 1, 10);
+    }
+  }
+  if (required_velocity < lut_.front().release_velocity) return 1;
+  return 10;
 }
 
 double ShooterCalculator::getRequiredVelocityWithDrag(
@@ -137,13 +159,23 @@ std::vector<geometry_msgs::msg::Point> ShooterCalculator::calculateTrajectory(
 }
 
 double ShooterCalculator::linearInterpolate(
-  int pwm,
+  int output_level,
   const ShooterLUT & lut1,
   const ShooterLUT & lut2)
 {
-  double ratio = static_cast<double>(pwm - lut1.pwm_value) /
-                 (lut2.pwm_value - lut1.pwm_value);
-  return lut1.initial_velocity + ratio * (lut2.initial_velocity - lut1.initial_velocity);
+  double ratio = static_cast<double>(output_level - lut1.output_level) /
+                 (lut2.output_level - lut1.output_level);
+  return lut1.release_velocity + ratio * (lut2.release_velocity - lut1.release_velocity);
+}
+
+double ShooterCalculator::linearInterpolateDistance(
+  double distance,
+  const ShooterLUT & lut1,
+  const ShooterLUT & lut2)
+{
+  double ratio = (distance - lut1.flight_distance) /
+                 (lut2.flight_distance - lut1.flight_distance);
+  return lut1.release_velocity + ratio * (lut2.release_velocity - lut1.release_velocity);
 }
 
 } // namespace shooter_calculator

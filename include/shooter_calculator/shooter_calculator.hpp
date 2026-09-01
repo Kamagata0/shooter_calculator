@@ -8,8 +8,9 @@ namespace shooter_calculator
 {
 
 struct ShooterLUT {
-  int pwm_value;
-  double initial_velocity;
+  int output_level;
+  double release_velocity;
+  double flight_distance;
 };
 
 class ShooterCalculator
@@ -18,10 +19,17 @@ public:
   ShooterCalculator();
 
   void initializeLUT();
-  double getVelocityFromPWM(int pwm_value);
-  
-  // 新しく追加した関数群
-  int getPWMFromVelocity(double required_velocity);
+
+  // 実測データベースに基づく出力レベル/リリース速度の計算
+  double getReleaseVelocityFromOutputLevel(int output_level);
+  int getOutputLevelFromDistance(double distance);
+  int getOutputLevelFromVelocity(double required_velocity);
+
+  // 互換ラッパー
+  double getVelocityFromPWM(int pwm_value) { return getReleaseVelocityFromOutputLevel(pwm_value); }
+  int getPWMFromDistance(double distance) { return getOutputLevelFromDistance(distance); }
+  int getPWMFromVelocity(double required_velocity) { return getOutputLevelFromVelocity(required_velocity); }
+
   double getRequiredVelocityWithDrag(
     double horizontal_distance,
     double height_diff,
@@ -41,7 +49,8 @@ public:
 
 private:
   std::vector<ShooterLUT> lut_;
-  double linearInterpolate(int pwm, const ShooterLUT & lut1, const ShooterLUT & lut2);
+  double linearInterpolate(int output_level, const ShooterLUT & lut1, const ShooterLUT & lut2);
+  double linearInterpolateDistance(double distance, const ShooterLUT & lut1, const ShooterLUT & lut2);
 };
 
 }  // namespace shooter_calculator
