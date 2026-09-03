@@ -11,6 +11,16 @@ def generate_launch_description():
         default_value='moving_bucket',
         description='Target TF frame'
     )
+    enable_real_output_arg = DeclareLaunchArgument(
+        'enable_real_output',
+        default_value='false',
+        description='Enable publishing belt speed commands to robot-port'
+    )
+    auto_initialize_belt_arg = DeclareLaunchArgument(
+        'auto_initialize_belt',
+        default_value='false',
+        description='Publish belt initialization while real output is enabled'
+    )
 
     shooter_calculator_node = Node(
         package='shooter_calculator',
@@ -25,10 +35,15 @@ def generate_launch_description():
             'cloth_mass_kg': 0.12,
             'cloth_area_m2': 0.01,
             'drag_coefficient': 0.1,
+            'enable_real_output': LaunchConfiguration('enable_real_output'),
+            'auto_initialize_belt': LaunchConfiguration('auto_initialize_belt'),
+            'belt_speed_command_max_mps': 1.0,
         }]
     )
 
     return LaunchDescription([
         target_frame_arg,
+        enable_real_output_arg,
+        auto_initialize_belt_arg,
         shooter_calculator_node,
     ])

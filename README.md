@@ -117,11 +117,43 @@ LUT は PWM ではなく、実験時のモーター出力と release velocity �
 - 緑の線: 選択された出力の予測軌道 1 本
 - 白文字: 目標距離 / 推奨出力 / 予測 release velocity
 
-このノードはモーターへ指令を送信しません。表示される `Recommended output` は計算上の推奨値であり、`Predicted release velocity` は実測 LUT に基づく予測値です。
+通常起動ではモーターへ指令を送信しません。`enable_real_output:=true` の場合だけ、計算したベルト速度指令を `/belt/speed_ratio` へ送ります。表示される `Recommended output` は計算上の推奨値であり、`Predicted release velocity` は実測 LUT に基づく予測値です。
+
+## 7. 実機へ速度指令を送る場合
+
+通常起動では実機へ何も送りません。`robot-port` を起動した状態で、次のように明示的に有効化した場合だけ `/belt/speed_ratio` へ速度指令を送ります。
+
+```bash
+ros2 launch shooter_calculator shooter_calculator.launch.py \
+	enable_real_output:=true \
+	auto_initialize_belt:=true
+```
+
+この機能が送るのはベルト速度指令だけです。`/belt/throw` は自動送信しないため、射出は別途確認してから実行します。
+
+```bash
+ros2 topic pub --once /belt/throw std_msgs/msg/Bool "{data: true}"
+```
+
+送信先は `robot-port` の次のトピックです。
+
+- `/belt/speed_ratio`: ベルト速度指令 [m/s]
+- `/belt/init`: ベルト初期化
+- `/belt/throw`: 射出開始
+
+現在の変換は、実測出力 1〜10 を `0.1〜1.0 m/s` に仮対応させています。実機で使う前に、`belt_vel` と実測 release velocity の対応を校正し、`belt_speed_command_max_mps` を確認してください。速度指令を有効にしても、物理的な安全確認なしに射出しないでください。
+
+`enable_real_output:=true` にしても、雑巾を勝手に射出することはありません。計算ノードが送信するのは速度指令だけです。実際に射出するには、`robot-port` が起動している状態で、利用者が `/belt/throw` に `true` を明示的に送る必要があります。
+
+予測だけを行う場合は、次の通常起動を使用してください。
+
+```bash
+ros2 launch shooter_calculator shooter_calculator.launch.py
+```
 
 ---
 
-## 7. パラメータ
+## 8. パラメータ
 
 launch ファイルで以下を調整します。
 
@@ -129,10 +161,13 @@ launch ファイルで以下を調整します。
 - cloth_mass_kg: 雑巾の質量 [kg]
 - cloth_area_m2: 受風面積 [m^2]
 - drag_coefficient: 空気抵抗係数
+- enable_real_output: 実機への速度指令を有効化。既定値は false
+- auto_initialize_belt: `/belt/init` を自動送信。既定値は false
+- belt_speed_command_max_mps: 出力 10 に対応させる最大速度 [m/s]
 
 ---
 
-## 8. 運用時の確認ポイント
+## 9. 運用時の確認ポイント
 
 - map -> base_link が出ている
 - map -> moving_bucket が出ている
@@ -143,7 +178,7 @@ launch ファイルで以下を調整します。
 
 ---
 
-## 9. 重要な注意点
+## 10. 重要な注意点
 
 このノードは理論式だけで動いているわけではなく、実機計測ベースの LUT を使う設計です。実際の軌道の正確さは、次の更新で大きく変わります。
 
@@ -154,13 +189,13 @@ launch ファイルで以下を調整します。
 
 ---
 
-## 10. 現在のステータス
+## 11. 現在のステータス
 
 現時点の実装は、静止または動く TF ターゲットに対して、実測 LUT の出力 1〜10 を比較し、目標に最も近い 1 本の軌道を表示します。ターゲットの移動予測や実機へのモーター指令は、このパッケージには含まれていません。
 
 ---
 
-## 11. 関連リポジトリ
+## 12. 関連リポジトリ
 
 今回のロボコンのベルト直動、エアシリンダー、ROS 2 通信、シミュレーション、設計資料は、次のリポジトリに分かれています。
 

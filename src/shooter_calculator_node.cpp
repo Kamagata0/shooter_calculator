@@ -1,6 +1,8 @@
 #include "shooter_calculator/shooter_calculator.hpp"
 #include <rclcpp/rclcpp.hpp>
 #include <geometry_msgs/msg/transform_stamped.hpp>
+#include <std_msgs/msg/bool.hpp>
+#include <std_msgs/msg/float32.hpp>
 #include <visualization_msgs/msg/marker.hpp>
 #include <visualization_msgs/msg/marker_array.hpp>
 #include <tf2_ros/buffer.h>
@@ -43,6 +45,9 @@ public:
     // 【空気抵抗パラメータ 2】空気抵抗係数
     // ※数値を小さくすることで、遠くまで届くように調整しています
     this->declare_parameter("drag_coefficient", 0.1);
+    this->declare_parameter("enable_real_output", false);
+    this->declare_parameter("auto_initialize_belt", false);
+    this->declare_parameter("belt_speed_command_max_mps", 1.0);
 
     // TFバッファとリスナーの初期化
     tf_buffer_ = std::make_shared<tf2_ros::Buffer>(this->get_clock());
@@ -51,6 +56,8 @@ public:
     // RViz用のマーカー配信パブリッシャー
     pub_trajectory_ = this->create_publisher<visualization_msgs::msg::MarkerArray>(
       "~/trajectory_markers", 10);
+    belt_speed_pub_ = this->create_publisher<std_msgs::msg::Float32>("/belt/speed_ratio", 10);
+    belt_init_pub_ = this->create_publisher<std_msgs::msg::Bool>("/belt/init", 10);
 
     // 0.1秒（100ミリ秒）ごとに計算と可視化を実行するタイマー
     timer_ = this->create_wall_timer(
@@ -65,6 +72,8 @@ private:
   std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
   std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr pub_trajectory_;
+  rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr belt_speed_pub_;
+  rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr belt_init_pub_;
   rclcpp::TimerBase::SharedPtr timer_;
 
   geometry_msgs::msg::TransformStamped lookupTargetTransform()
@@ -130,6 +139,9 @@ private:
       // 各実測出力の軌道を目標位置までシミュレーションし、最も近い出力を選ぶ
       int required_output = 1;
       double required_velocity = calculator_->getReleaseVelocityFromOutputLevel(required_output);
+      const bool enable_real_output = this->get_parameter("enable_real_output").as_bool();
+      const bool auto_initialize_belt = this->get_parameter("auto_initialize_belt").as_bool();
+      const double belt_speed_max = this->get_parameter("belt_speed_command_max_mps").as_double();
       double closest_target_distance = std::numeric_limits<double>::max();
       std::vector<geometry_msgs::msg::Point> target_trajectory;
 
@@ -183,6 +195,19 @@ private:
             required_velocity = output_velocity;
             target_trajectory = candidate_trajectory;
           }
+        }
+      }
+
+      if (enable_real_output) {
+        std_msgs::msg::Float32 belt_speed_message;
+        belt_speed_message.data = static_cast<float>(
+          std::clamp(static_cast<double>(required_output) / 10.0 * belt_speed_max, 0.0, belt_speed_max));
+        belt_speed_pub_->publish(belt_speed_message);
+
+        if (auto_initialize_belt) {
+          std_msgs::msg::Bool belt_init_message;
+          belt_init_message.data = true;
+          belt_init_pub_->publish(belt_init_message);
         }
       }
 
