@@ -115,9 +115,9 @@ LUT は PWM ではなく、実験時のモーター出力と release velocity �
 ## 6. RViz で何を描くか
 
 - 緑の線: 選択された出力の予測軌道 1 本
-- 白文字: 目標距離 / 推奨出力 / 予測 release velocity
+- 白文字: 目標距離 / 推奨 belt_vel / モーター RPM / 予測 release velocity
 
-通常起動ではモーターへ指令を送信しません。`enable_real_output:=true` の場合だけ、計算したベルト速度指令を `/belt/speed_ratio` へ送ります。表示される `Recommended output` は計算上の推奨値であり、`Predicted release velocity` は実測 LUT に基づく予測値です。
+通常起動ではモーターへ指令を送信しません。`enable_real_output:=true` の場合だけ、計算した `belt_vel` を `/belt/speed_ratio` へ送ります。表示される `Recommended belt_vel` とモーター RPM は計算上の推奨値であり、`Predicted release velocity` は実測 LUT に基づく予測値です。
 
 ## 7. 実機へ速度指令を送る場合
 

@@ -142,6 +142,11 @@ private:
       const bool enable_real_output = this->get_parameter("enable_real_output").as_bool();
       const bool auto_initialize_belt = this->get_parameter("auto_initialize_belt").as_bool();
       const double belt_speed_max = this->get_parameter("belt_speed_command_max_mps").as_double();
+      constexpr double erpm_per_belt_velocity = -46000.0;
+      constexpr double motor_pole_pairs = 14.0;
+      double required_belt_velocity = 0.0;
+      double required_erpm = 0.0;
+      double required_motor_rpm = 0.0;
       double closest_target_distance = std::numeric_limits<double>::max();
       std::vector<geometry_msgs::msg::Point> target_trajectory;
 
@@ -198,10 +203,14 @@ private:
         }
       }
 
+      required_belt_velocity = std::clamp(
+        static_cast<double>(required_output) / 10.0 * belt_speed_max, 0.0, 1.0);
+      required_erpm = required_belt_velocity * erpm_per_belt_velocity;
+      required_motor_rpm = required_erpm / motor_pole_pairs;
+
       if (enable_real_output) {
         std_msgs::msg::Float32 belt_speed_message;
-        belt_speed_message.data = static_cast<float>(
-          std::clamp(static_cast<double>(required_output) / 10.0 * belt_speed_max, 0.0, belt_speed_max));
+        belt_speed_message.data = static_cast<float>(required_belt_velocity);
         belt_speed_pub_->publish(belt_speed_message);
 
         if (auto_initialize_belt) {
@@ -245,7 +254,8 @@ private:
       info_marker.scale.z = 0.1;
       info_marker.color.r = 1.0; info_marker.color.g = 1.0; info_marker.color.b = 1.0; info_marker.color.a = 1.0;
       info_marker.text = "Distance: " + std::to_string(horizontal_target_distance) + " m\n" +
-                         "Recommended output: " + std::to_string(required_output) + "\n" +
+                         "Recommended belt_vel: " + std::to_string(required_belt_velocity) + " m/s\n" +
+                         "Motor RPM: " + std::to_string(required_motor_rpm) + "\n" +
                          "Predicted release velocity: " + std::to_string(required_velocity) + " m/s";
       marker_array.markers.push_back(info_marker);
 
@@ -258,11 +268,12 @@ private:
         this->get_logger(),
         *this->get_clock(),
         1000,
-        "Target: %.2f m, Height: %.2f m | Predicted Vel: %.2f m/s -> [ Recommended output: %d ]",
+        "Target: %.2f m, Height: %.2f m | Predicted Vel: %.2f m/s -> [ belt_vel: %.2f m/s, RPM: %.0f ]",
         horizontal_target_distance,
         target_height_delta,
         required_velocity,
-        required_output
+        required_belt_velocity,
+        required_motor_rpm
       );
 
     } catch (const tf2::TransformException & ex) {
