@@ -7,6 +7,7 @@
 #include <tf2_ros/transform_listener.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 #include <cmath>
+#include <limits>
 
 namespace shooter_calculator
 {
@@ -126,12 +127,10 @@ private:
       const double drag_coefficient = this->get_parameter("drag_coefficient").as_double();
       const double angle_rad = launch_angle_deg * M_PI / 180.0;
 
-      // 実測データベースを優先し、距離から output level を逆算して release velocity を求める
-      int required_output = calculator_->getOutputLevelFromDistance(horizontal_target_distance);
+      // 各実測出力の軌道を目標位置までシミュレーションし、最も近い出力を選ぶ
+      int required_output = 1;
       double required_velocity = calculator_->getReleaseVelocityFromOutputLevel(required_output);
-
-      // 全出力レベルの軌跡を一度に可視化し、現在の推奨値を強調する
-      std::vector<std::vector<geometry_msgs::msg::Point>> all_trajectories;
+      double closest_target_distance = std::numeric_limits<double>::max();
       std::vector<geometry_msgs::msg::Point> target_trajectory;
 
       if (horizontal_target_distance > 0.0) {
@@ -141,15 +140,15 @@ private:
         const double dt = 0.02;           // シミュレーションの刻み時間 [秒]
 
         for (int output = 1; output <= 10; ++output) {
-          std::vector<geometry_msgs::msg::Point> trajectory;
           const double output_velocity = calculator_->getReleaseVelocityFromOutputLevel(output);
-
           double x = shooter_x;
           double y = shooter_y;
           double z = shooter_z;
           double vx = output_velocity * std::cos(angle_rad) * ux;
           double vy = output_velocity * std::cos(angle_rad) * uy;
           double vz = output_velocity * std::sin(angle_rad);
+          double candidate_closest_distance = std::numeric_limits<double>::max();
+          std::vector<geometry_msgs::msg::Point> candidate_trajectory;
 
           for (int i = 0; i < 200; ++i) {
             const double speed = std::sqrt(vx * vx + vy * vy + vz * vz);
@@ -169,22 +168,20 @@ private:
 
             geometry_msgs::msg::Point p;
             p.x = x; p.y = y; p.z = z;
-
-            const double dist_to_target = std::sqrt((x - target_x) * (x - target_x) +
-                                                    (y - target_y) * (y - target_y) +
-                                                    (z - target_z) * (z - target_z));
-            if (dist_to_target < 0.15) {
-              p.x = target_x; p.y = target_y; p.z = target_z;
-              trajectory.push_back(p);
-              break;
-            }
+            const double distance_to_target = std::sqrt(
+              (x - target_x) * (x - target_x) +
+              (y - target_y) * (y - target_y) +
+              (z - target_z) * (z - target_z));
+            candidate_closest_distance = std::min(candidate_closest_distance, distance_to_target);
             if (z < 0.0) break;
-            trajectory.push_back(p);
+            candidate_trajectory.push_back(p);
           }
 
-          all_trajectories.push_back(trajectory);
-          if (output == required_output) {
-            target_trajectory = trajectory;
+          if (candidate_closest_distance < closest_target_distance) {
+            closest_target_distance = candidate_closest_distance;
+            required_output = output;
+            required_velocity = output_velocity;
+            target_trajectory = candidate_trajectory;
           }
         }
       }
@@ -194,37 +191,7 @@ private:
       // ==========================================
       visualization_msgs::msg::MarkerArray marker_array;
 
-      // 0: 赤球（目標のバケツ位置）
-      visualization_msgs::msg::Marker target_marker;
-      target_marker.header.frame_id = "map";
-      target_marker.header.stamp = this->now();
-      target_marker.ns = "shooter";
-      target_marker.id = 0;
-      target_marker.type = visualization_msgs::msg::Marker::SPHERE;
-      target_marker.action = visualization_msgs::msg::Marker::ADD;
-      target_marker.pose.position.x = target_x;
-      target_marker.pose.position.y = target_y;
-      target_marker.pose.position.z = target_z;
-      target_marker.scale.x = 0.1; target_marker.scale.y = 0.1; target_marker.scale.z = 0.1;
-      target_marker.color.r = 1.0; target_marker.color.g = 0.0; target_marker.color.b = 0.0; target_marker.color.a = 1.0;
-      marker_array.markers.push_back(target_marker);
-
-      // 1: 黄球（ロボットの発射口位置）
-      visualization_msgs::msg::Marker shooter_marker;
-      shooter_marker.header.frame_id = "map";
-      shooter_marker.header.stamp = this->now();
-      shooter_marker.ns = "shooter";
-      shooter_marker.id = 1;
-      shooter_marker.type = visualization_msgs::msg::Marker::SPHERE;
-      shooter_marker.action = visualization_msgs::msg::Marker::ADD;
-      shooter_marker.pose.position.x = shooter_x;
-      shooter_marker.pose.position.y = shooter_y;
-      shooter_marker.pose.position.z = shooter_z;
-      shooter_marker.scale.x = 0.08; shooter_marker.scale.y = 0.08; shooter_marker.scale.z = 0.08;
-      shooter_marker.color.r = 1.0; shooter_marker.color.g = 1.0; shooter_marker.color.b = 0.0; shooter_marker.color.a = 1.0;
-      marker_array.markers.push_back(shooter_marker);
-
-      // 2: 現在推奨出力の緑の線（ハイライト）
+      // 推奨出力で計算した軌跡を1本だけ表示
       visualization_msgs::msg::Marker trajectory_marker;
       trajectory_marker.header.frame_id = "map";
       trajectory_marker.header.stamp = this->now();
@@ -239,48 +206,7 @@ private:
       }
       marker_array.markers.push_back(trajectory_marker);
 
-      // 全出力レベルの軌跡を薄く重ね描きする（1〜10）
-      for (int output = 1; output <= 10; ++output) {
-        visualization_msgs::msg::Marker all_output_marker;
-        all_output_marker.header.frame_id = "map";
-        all_output_marker.header.stamp = this->now();
-        all_output_marker.ns = "shooter";
-        all_output_marker.id = 100 + output;
-        all_output_marker.type = visualization_msgs::msg::Marker::LINE_STRIP;
-        all_output_marker.action = visualization_msgs::msg::Marker::ADD;
-        all_output_marker.scale.x = 0.008;
-
-        const double t = static_cast<double>(output - 1) / 9.0;
-        all_output_marker.color.r = 0.2 + 0.8 * t;
-        all_output_marker.color.g = 0.2 + 0.8 * (1.0 - t);
-        all_output_marker.color.b = 0.9;
-        all_output_marker.color.a = 0.25;
-
-        const auto & traj = all_trajectories.at(output - 1);
-        for (const auto & p : traj) {
-          all_output_marker.points.push_back(p);
-        }
-        marker_array.markers.push_back(all_output_marker);
-      }
-
-      // 3: 青球（着地予測点）
-      if (!target_trajectory.empty()) {
-        visualization_msgs::msg::Marker landing_marker;
-        landing_marker.header.frame_id = "map";
-        landing_marker.header.stamp = this->now();
-        landing_marker.ns = "shooter";
-        landing_marker.id = 3;
-        landing_marker.type = visualization_msgs::msg::Marker::SPHERE;
-        landing_marker.action = visualization_msgs::msg::Marker::ADD;
-        landing_marker.pose.position.x = target_x;
-        landing_marker.pose.position.y = target_y;
-        landing_marker.pose.position.z = target_z;
-        landing_marker.scale.x = 0.15; landing_marker.scale.y = 0.15; landing_marker.scale.z = 0.15;
-        landing_marker.color.r = 0.0; landing_marker.color.g = 0.0; landing_marker.color.b = 1.0; landing_marker.color.a = 0.6;
-        marker_array.markers.push_back(landing_marker);
-      }
-
-      // 4: 文字情報（距離・PWM・初速の表示）
+      // 4: 文字情報（距離・推奨出力・予測速度の表示）
       visualization_msgs::msg::Marker info_marker;
       info_marker.header.frame_id = "map";
       info_marker.header.stamp = this->now();
@@ -294,8 +220,8 @@ private:
       info_marker.scale.z = 0.1;
       info_marker.color.r = 1.0; info_marker.color.g = 1.0; info_marker.color.b = 1.0; info_marker.color.a = 1.0;
       info_marker.text = "Distance: " + std::to_string(horizontal_target_distance) + " m\n" +
-                         "Output: " + std::to_string(required_output) + "\n" +
-                         "Release velocity: " + std::to_string(required_velocity) + " m/s";
+                         "Recommended output: " + std::to_string(required_output) + "\n" +
+                         "Predicted release velocity: " + std::to_string(required_velocity) + " m/s";
       marker_array.markers.push_back(info_marker);
 
       pub_trajectory_->publish(marker_array);
@@ -307,7 +233,7 @@ private:
         this->get_logger(),
         *this->get_clock(),
         1000,
-        "Target: %.2f m, Height: %.2f m | Required Vel: %.2f m/s -> [ Output: %d ]",
+        "Target: %.2f m, Height: %.2f m | Predicted Vel: %.2f m/s -> [ Recommended output: %d ]",
         horizontal_target_distance,
         target_height_delta,
         required_velocity,
