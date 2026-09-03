@@ -32,8 +32,8 @@ public:
     // ロボット自身の基準フレーム名
     this->declare_parameter("robot_frame", "base_link");
     
-    // 発射角度（度）: 45度固定で計算する場合のデフォルト値
-    this->declare_parameter("launch_angle_deg", 45.0);
+    // 発射角度（度）: 実測データに合わせたデフォルト値
+    this->declare_parameter("launch_angle_deg", 50.0);
     
     // 雑巾（弾）の質量 [kg]: シミュレーションの物理計算で使用
     this->declare_parameter("cloth_mass_kg", 0.12);

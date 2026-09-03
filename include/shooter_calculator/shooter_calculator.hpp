@@ -43,7 +43,7 @@ public:
     int num_points = 50);
 
   const double GRAVITY = 9.81;
-  const double SHOOTER_ANGLE_DEG = 45.0;
+  const double SHOOTER_ANGLE_DEG = 50.0;
   const double SHOOTER_HORIZONTAL = 0.2;
   const double SHOOTER_HEIGHT = 0.3;
 
