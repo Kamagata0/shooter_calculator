@@ -6,6 +6,11 @@ from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
 def generate_launch_description():
+    use_sim_time_arg = DeclareLaunchArgument(
+        'use_sim_time',
+        default_value='false',
+        description='Use simulation (Gazebo / rosbag) clock if true'
+    )
     target_frame_arg = DeclareLaunchArgument(
         'target_frame',
         default_value='moving_bucket',
@@ -28,6 +33,7 @@ def generate_launch_description():
         name='shooter_calculator',
         output='screen',
         parameters=[{
+            'use_sim_time': LaunchConfiguration('use_sim_time'),
             'target_frame': LaunchConfiguration('target_frame'),
             'target_frame_fallback': LaunchConfiguration('target_frame'),
             'robot_frame': 'base_link',
@@ -42,6 +48,7 @@ def generate_launch_description():
     )
 
     return LaunchDescription([
+        use_sim_time_arg,
         target_frame_arg,
         enable_real_output_arg,
         auto_initialize_belt_arg,
